@@ -1,0 +1,11 @@
+# Zero-Knowledge Proof Age Verification
+# Залежності для магістерської роботи
+
+# Основна криптографічна бібліотека (Ethereum Foundation)
+py_ecc>=7.0.0
+
+# Утиліти
+colorama>=0.4.6
+
+# Тестування
+pytest>=7.0.0

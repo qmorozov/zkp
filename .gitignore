@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Node.js
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Circom artifacts (regenerate with npm run compile)
+*.sym
+circuits/compiled/*.json
+circuits/compiled/*.wasm
+circuits/compiled/*.zkey
+circuits/compiled/*.wtns
+
+# Secrets (never commit!)
+*.ptau
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
