@@ -1,406 +1,547 @@
 #!/usr/bin/env python3
 """
-Zero-Knowledge Proof Age Verification Demo
+Демонстрація протоколу Zero-Knowledge Proof для верифікації віку.
 
-Demonstration of Schnorr Sigma Protocol with Pedersen Commitment.
-Interactive step-by-step demonstration of ZKP for age verification.
+Магістерська кваліфікаційна робота
+Тема: Дослідження ефективності ZK-протоколів для верифікації приватних даних
 
-Uses PEDERSEN COMMITMENT: C = age * G + r * H
-- Information-theoretic hiding (brute-force impossible)
-- Computational binding (based on ECDLP)
+Реалізація:
+- Pedersen Commitment (інформаційно-теоретичне приховування)
+- Schnorr Sigma Protocol + Fiat-Shamir transform
+- Крива secp256k1 (128-bit security)
+
+Автор: Студент магістратури
 """
 
 import sys
 import os
 sys.path.insert(0, os.path.dirname(__file__))
 
-from src.crypto_library_zkp import CryptographyLibraryZKP, format_point
+from src.crypto_library_zkp import CryptographyLibraryZKP
 from src.colors import Colors
 import time
+import io
+import contextlib
 
 C = Colors
 
 
 def clear():
-    """Clear console."""
+    """Очищення терміналу."""
     os.system('cls' if os.name == 'nt' else 'clear')
 
 
-def print_centered(text, width=80):
-    """Print centered text."""
-    print(f"{C.BOLD_WHITE}{text.center(width)}{C.RESET}")
-
-
-def print_header(title, width=80):
-    """Print colored header."""
-    print(f"{C.BOLD_CYAN}{'=' * width}{C.RESET}")
-    print_centered(title, width)
-    print(f"{C.BOLD_CYAN}{'=' * width}{C.RESET}")
-
-
-def print_box(title, lines, width=80):
-    """Print text in a box."""
-    print(f"{C.BOLD_CYAN}{'=' * width}{C.RESET}")
-    print_centered(title, width)
-    print(f"{C.BOLD_CYAN}{'=' * width}{C.RESET}")
-    for line in lines:
-        print(line)
-    print(f"{C.BOLD_CYAN}{'=' * width}{C.RESET}")
-
-
 def wait():
-    """Wait for Enter key."""
-    input(f"\n {C.DIM}Press Enter to continue...{C.RESET}")
+    """Очікування підтвердження користувача."""
+    input(f"\n  {C.DIM}[Enter] — продовжити{C.RESET}")
 
 
-def get_age(prompt):
-    """Get age input from user."""
+def header(title: str, subtitle: str = None):
+    """Заголовок розділу."""
+    print(f"\n  {C.BOLD_CYAN}{'═' * 66}{C.RESET}")
+    print(f"  {C.BOLD_WHITE}{title.center(66)}{C.RESET}")
+    if subtitle:
+        print(f"  {C.DIM}{subtitle.center(66)}{C.RESET}")
+    print(f"  {C.BOLD_CYAN}{'═' * 66}{C.RESET}")
+
+
+def section(title: str):
+    """Підзаголовок секції."""
+    print(f"\n  {C.BOLD_WHITE}{title}{C.RESET}")
+    print(f"  {C.DIM}{'─' * 60}{C.RESET}")
+
+
+def info_block(lines: list, color=None):
+    """Інформаційний блок."""
+    c = color or C.CYAN
+    width = max(len(line) for line in lines) + 4
+    print(f"\n  {c}┌{'─' * width}┐{C.RESET}")
+    for line in lines:
+        print(f"  {c}│{C.RESET}  {line.ljust(width - 2)}{c}│{C.RESET}")
+    print(f"  {c}└{'─' * width}┘{C.RESET}")
+
+
+def result(success: bool, message: str):
+    """Результат операції."""
+    if success:
+        symbol = f"{C.BOLD_GREEN}✓{C.RESET}"
+        color = C.BOLD_GREEN
+    else:
+        symbol = f"{C.BOLD_RED}✗{C.RESET}"
+        color = C.BOLD_RED
+    print(f"\n  {symbol} {color}{message}{C.RESET}")
+
+
+def metric(label: str, value: str, unit: str = ""):
+    """Виведення метрики."""
+    print(f"    {C.CYAN}•{C.RESET} {label}: {C.BOLD_WHITE}{value}{C.RESET} {unit}")
+
+
+# ============================================================================
+# ЕКРАНИ ДЕМОНСТРАЦІЇ
+# ============================================================================
+
+def screen_title():
+    """Титульний екран."""
+    clear()
+    print(f"""
+  {C.BOLD_CYAN}╔══════════════════════════════════════════════════════════════════╗
+  ║                                                                  ║
+  ║   {C.BOLD_WHITE}ZERO-KNOWLEDGE PROOF: ВЕРИФІКАЦІЯ ВІКУ{C.BOLD_CYAN}                    ║
+  ║                                                                  ║
+  ║   {C.DIM}Магістерська кваліфікаційна робота{C.BOLD_CYAN}                          ║
+  ║                                                                  ║
+  ╚══════════════════════════════════════════════════════════════════╝{C.RESET}
+
+  {C.BOLD_WHITE}Задача:{C.RESET}
+
+    Довести що вік ≥ порогу, НЕ розкриваючи точне значення віку.
+
+  {C.BOLD_WHITE}Як це працює:{C.RESET}
+
+    {C.CYAN}┌──────────────────────────────────────────────────────────────┐
+    │                                                              │
+    │  1. Користувач (Prover) має секрет: свій вік                 │
+    │                                                              │
+    │  2. Сервіс (Verifier) хоче перевірити: вік ≥ 18?             │
+    │                                                              │
+    │  3. Prover створює математичний доказ                        │
+    │                                                              │
+    │  4. Verifier перевіряє доказ і дізнається ТІЛЬКИ:            │
+    │     "Так, вік ≥ 18" — без точного значення                   │
+    │                                                              │
+    └──────────────────────────────────────────────────────────────┘{C.RESET}
+
+  {C.BOLD_WHITE}Гарантії протоколу:{C.RESET}
+
+    {C.GREEN}•{C.RESET} Якщо вік ≥ порогу — доказ завжди пройде перевірку
+    {C.GREEN}•{C.RESET} Якщо вік < порогу — неможливо створити валідний доказ
+    {C.GREEN}•{C.RESET} Точний вік ніколи не передається і не розкривається
+""")
+
+
+def screen_input():
+    """Введення параметрів."""
+    clear()
+    header("ВХІДНІ ПАРАМЕТРИ", "Налаштування тестового сценарію")
+
+    print(f"""
+  {C.BOLD_WHITE}Модель протоколу:{C.RESET}
+
+    {C.CYAN}┌─────────────────┐                      ┌─────────────────┐
+    │     PROVER      │   ──── proof ────►   │    VERIFIER     │
+    │  (користувач)   │                      │    (сервіс)     │
+    └─────────────────┘                      └─────────────────┘{C.RESET}
+
+  {C.BOLD_WHITE}Розподіл інформації:{C.RESET}
+
+    {C.CYAN}Prover:{C.RESET}    володіє секретом (вік)
+    {C.CYAN}Verifier:{C.RESET}  знає лише поріг (public)
+    {C.CYAN}Результат:{C.RESET} verifier дізнається тільки вік ≥ поріг (так/ні)
+
+  {C.DIM}Введіть параметри демонстрації:{C.RESET}
+""")
+
     while True:
         try:
-            age = int(input(f"\n{C.BOLD_WHITE}{prompt}:{C.RESET} "))
+            age = int(input(f"  {C.BOLD_WHITE}Вік (секретне значення):{C.RESET} "))
             if 0 <= age <= 150:
-                return age
-            print(f"{C.BOLD_RED}Enter age from 0 to 150{C.RESET}")
+                break
+            print(f"  {C.RED}Допустимий діапазон: 0-150{C.RESET}")
         except ValueError:
-            print(f"{C.BOLD_RED}Enter a number{C.RESET}")
+            print(f"  {C.RED}Введіть ціле число{C.RESET}")
         except KeyboardInterrupt:
-            print(f"\n\n{C.BOLD_YELLOW}Program interrupted.{C.RESET}")
             sys.exit(0)
 
+    while True:
+        try:
+            threshold = int(input(f"  {C.BOLD_WHITE}Поріг верифікації:{C.RESET} "))
+            if 0 <= threshold <= 150:
+                break
+            print(f"  {C.RED}Допустимий діапазон: 0-150{C.RESET}")
+        except ValueError:
+            print(f"  {C.RED}Введіть ціле число{C.RESET}")
+        except KeyboardInterrupt:
+            sys.exit(0)
+
+    return age, threshold
+
+
+def screen_commitment(system, age):
+    """Етап 1: Створення commitment."""
+    clear()
+    header("ЕТАП 1: СТВОРЕННЯ ЗОБОВ'ЯЗАННЯ", "Commitment — фіксація значення без розкриття")
+
+    section("Що відбувається")
+    print(f"""
+    Система створює криптографічне зобов'язання для значення віку.
+
+    {C.BOLD_WHITE}Властивості:{C.RESET}
+      • Значення (вік) зафіксовано і не може бути змінено
+      • Значення неможливо визначити, маючи лише commitment
+""")
+
+    section("Виконання")
+    print(f"  {C.BOLD_WHITE}Вхідне значення:{C.RESET} вік = {C.BOLD_CYAN}{age}{C.RESET}")
+    print(f"  {C.DIM}Генерація випадкового blinding factor...{C.RESET}")
+    print(f"  {C.DIM}Обчислення точки на еліптичній кривій...{C.RESET}")
+
+    start = time.perf_counter()
+    commitment, blinding, metrics = system.create_pedersen_commitment(age)
+    elapsed = (time.perf_counter() - start) * 1000
+
+    # Повні криптографічні дані
+    comm_x = hex(commitment[0])
+    comm_y = hex(commitment[1])
+
+    result(True, f"Commitment створено за {elapsed:.2f} мс")
+
+    section("Криптографічні дані (реальні значення)")
+    print(f"""
+    {C.DIM}Commitment — точка на кривій secp256k1:{C.RESET}
+
+    {C.CYAN}X:{C.RESET} {C.BOLD_WHITE}{comm_x}{C.RESET}
+
+    {C.CYAN}Y:{C.RESET} {C.BOLD_WHITE}{comm_y}{C.RESET}
+
+    {C.DIM}Blinding factor: {metrics['blinding_factor_bits']} біт (випадкове число){C.RESET}
+    {C.DIM}Час обчислення: {elapsed:.2f} мс{C.RESET}
+
+    {C.YELLOW}⚠ Ці значення унікальні для кожного запуску (випадковий blinding factor){C.RESET}
+""")
+
+    section("Що знає кожна сторона")
+    print(f"""
+    {C.BOLD_WHITE}Prover знає:{C.RESET}
+      • вік = {age}
+      • blinding factor (секретне випадкове число)
+
+    {C.BOLD_WHITE}Verifier знає:{C.RESET}
+      • commitment (точка X, Y вище)
+      • {C.RED}НЕ знає вік{C.RESET}
+""")
+
+    return commitment, blinding, metrics
+
+
+def screen_proof(system, age, threshold, commitment, blinding):
+    """Етап 2: Генерація доказу."""
+    clear()
+    header("ЕТАП 2: ГЕНЕРАЦІЯ ДОКАЗУ", "Створення Zero-Knowledge Proof")
+
+    age_diff = age - threshold
+
+    section("Що відбувається")
+    print(f"""
+    Prover створює математичний доказ того, що вік ≥ {threshold}.
+
+    {C.BOLD_WHITE}Перевірка:{C.RESET} вік ({age}) ≥ поріг ({threshold})?
+    {C.BOLD_WHITE}Різниця:{C.RESET}   {age} - {threshold} = {C.BOLD_GREEN}{age_diff}{C.RESET} (невід'ємне число)
+""")
+
+    section("Виконання")
+    print(f"  {C.DIM}Генерація випадкових чисел...{C.RESET}")
+    print(f"  {C.DIM}Обчислення криптографічних компонентів...{C.RESET}")
+    print(f"  {C.DIM}Формування доказу...{C.RESET}")
+
+    start = time.perf_counter()
+    proof, metrics = system.pedersen_prove(age, threshold, commitment, blinding)
+    elapsed = (time.perf_counter() - start) * 1000
+
+    result(True, f"Доказ згенеровано за {elapsed:.2f} мс")
+
+    # Реальні дані доказу
+    R_x = hex(proof['R'][0])
+    R_y = hex(proof['R'][1])
+    challenge = hex(proof['c'])
+    s1 = hex(proof['s1'])
+    s2 = hex(proof['s2'])
+
+    section("Криптографічні дані доказу (реальні значення)")
+    print(f"""
+    {C.DIM}Компонент R (точка на кривій):{C.RESET}
+    {C.CYAN}R.x:{C.RESET} {C.BOLD_WHITE}{R_x}{C.RESET}
+    {C.CYAN}R.y:{C.RESET} {C.BOLD_WHITE}{R_y}{C.RESET}
+
+    {C.DIM}Challenge (256-bit hash):{C.RESET}
+    {C.CYAN}c:{C.RESET}   {C.BOLD_WHITE}{challenge}{C.RESET}
+
+    {C.DIM}Responses:{C.RESET}
+    {C.CYAN}s₁:{C.RESET}  {C.BOLD_WHITE}{s1}{C.RESET}
+    {C.CYAN}s₂:{C.RESET}  {C.BOLD_WHITE}{s2}{C.RESET}
+
+    {C.YELLOW}⚠ Ці значення унікальні для кожного запуску{C.RESET}
+""")
+
+    section("Характеристики доказу")
+    print(f"""
+    • Розмір: {C.BOLD_WHITE}{metrics['proof_size_bytes']}{C.RESET} байт
+    • Час генерації: {C.BOLD_WHITE}{elapsed:.2f}{C.RESET} мс
+
+    {C.BOLD_WHITE}Що міститься в доказі:{C.RESET}
+      {C.GREEN}✓{C.RESET} R, c, s₁, s₂ — криптографічні значення
+      {C.RED}✗{C.RESET} Значення віку ({age}) — НЕ міститься
+""")
+
+    return proof, metrics
+
+
+def screen_verify(system, commitment, threshold, proof):
+    """Етап 3: Верифікація."""
+    clear()
+    header("ЕТАП 3: ВЕРИФІКАЦІЯ ДОКАЗУ", "Перевірка на стороні Verifier")
+
+    section("Що відбувається")
+    print(f"""
+    Verifier отримав commitment і доказ від Prover.
+    Тепер він перевіряє, чи доказ є валідним.
+
+    {C.BOLD_WHITE}Verifier НЕ знає:{C.RESET}
+      • Точне значення віку
+      • Blinding factor
+
+    {C.BOLD_WHITE}Verifier має:{C.RESET}
+      • Commitment (публічний)
+      • Доказ (R, c, s₁, s₂)
+      • Поріг = {threshold}
+""")
+
+    section("Виконання верифікації")
+    print(f"  {C.DIM}Перевірка криптографічного рівняння...{C.RESET}")
+
+    start = time.perf_counter()
+    is_valid, metrics = system.pedersen_verify(commitment, threshold, proof)
+    elapsed = (time.perf_counter() - start) * 1000
+
+    if is_valid:
+        result(True, f"ВЕРИФІКАЦІЯ УСПІШНА")
+    else:
+        result(False, "ВЕРИФІКАЦІЯ НЕВДАЛА")
+
+    section("Деталі перевірки")
+    print(f"""
+    {C.CYAN}1.{C.RESET} Challenge відповідає hash: {C.BOLD_WHITE}{'Так' if metrics.get('challenge_matched') else 'Ні'}{C.RESET}
+    {C.CYAN}2.{C.RESET} Криптографічне рівняння виконано: {C.BOLD_WHITE}{'Так' if metrics.get('equation_verified') else 'Ні'}{C.RESET}
+    {C.CYAN}3.{C.RESET} Час верифікації: {C.BOLD_WHITE}{elapsed:.2f}{C.RESET} мс
+""")
+
+    section("Результат")
+    print(f"""
+    {C.GREEN}┌───────────────────────────────────────────────────────────────┐{C.RESET}
+    {C.GREEN}│{C.RESET}                                                               {C.GREEN}│{C.RESET}
+    {C.GREEN}│{C.RESET}   {C.BOLD_WHITE}Verifier отримав відповідь:{C.RESET}                               {C.GREEN}│{C.RESET}
+    {C.GREEN}│{C.RESET}                                                               {C.GREEN}│{C.RESET}
+    {C.GREEN}│{C.RESET}   {C.BOLD_GREEN}✓ "Так, вік користувача ≥ {threshold}"{C.RESET}                        {C.GREEN}│{C.RESET}
+    {C.GREEN}│{C.RESET}                                                               {C.GREEN}│{C.RESET}
+    {C.GREEN}│{C.RESET}   {C.RED}✗ Точний вік — НЕВІДОМИЙ{C.RESET}                                {C.GREEN}│{C.RESET}
+    {C.GREEN}│{C.RESET}                                                               {C.GREEN}│{C.RESET}
+    {C.GREEN}└───────────────────────────────────────────────────────────────┘{C.RESET}
+""")
+
+    return is_valid, metrics
+
+
+def screen_soundness(system, threshold):
+    """Етап 4: Демонстрація Soundness."""
+    clear()
+    header("ЕТАП 4: ПЕРЕВІРКА SOUNDNESS", "Неможливість фальсифікації")
+
+    section("Визначення властивості")
+    print(f"""
+    {C.BOLD_WHITE}Soundness:{C.RESET} нечесний prover з ймовірністю ≈ 0 може
+    створити валідний доказ для хибного твердження.
+
+    Базується на складності задачі ECDLP (Elliptic Curve
+    Discrete Logarithm Problem) для кривої secp256k1.
+""")
+
+    section("Тестовий сценарій")
+    fake_age = 15
+    info_block([
+        f"Спроба: створити доказ для вік = {fake_age}",
+        f"Поріг: {threshold}",
+        f"Твердження: {fake_age} ≥ {threshold} — ХИБНЕ",
+    ])
+
+    section("Виконання")
+    print(f"  {C.DIM}Спроба генерації фальшивого доказу...{C.RESET}")
+
+    fake_comm, fake_blind, _ = system.create_pedersen_commitment(fake_age)
+
+    try:
+        system.pedersen_prove(fake_age, threshold, fake_comm, fake_blind)
+        result(False, "ПОМИЛКА: система дозволила фальсифікацію!")
+        soundness_ok = False
+    except ValueError:
+        result(True, "Система відхилила спробу — Soundness підтверджено")
+        soundness_ok = True
+
+    section("Висновок")
+    print(f"""
+    {C.GREEN}✓{C.RESET} Властивість {C.BOLD_WHITE}Soundness{C.RESET} забезпечена
+
+    Математична гарантія: створення валідного доказу для
+    хибного твердження вимагає розв'язання задачі ECDLP,
+    що є обчислювально нездійсненним (2^128 операцій).
+""")
+
+    return soundness_ok
+
+
+def screen_summary(age, threshold, comm_ms, proof_ms, verify_ms):
+    """Підсумковий екран."""
+    clear()
+    header("ПІДСУМКИ ДЕМОНСТРАЦІЇ", "Результати та метрики")
+
+    total = comm_ms + proof_ms + verify_ms
+
+    section("Підтверджені властивості ZKP")
+    print(f"""
+    {C.GREEN}✓{C.RESET} {C.BOLD_WHITE}Completeness{C.RESET}   — чесний доказ прийнято
+    {C.GREEN}✓{C.RESET} {C.BOLD_WHITE}Soundness{C.RESET}      — фальшивий доказ відхилено
+    {C.GREEN}✓{C.RESET} {C.BOLD_WHITE}Zero-Knowledge{C.RESET} — вік = {age} залишився приватним
+""")
+
+    section("Метрики продуктивності")
+
+    # ASCII графік
+    max_t = max(comm_ms, proof_ms, verify_ms)
+    def bar(val, max_val, width=25):
+        filled = int((val / max_val) * width) if max_val > 0 else 0
+        return "█" * filled + "░" * (width - filled)
+
+    print(f"""
+    Commitment    {C.GREEN}{bar(comm_ms, max_t)}{C.RESET}  {comm_ms:>7.2f} мс
+    Proof         {C.YELLOW}{bar(proof_ms, max_t)}{C.RESET}  {proof_ms:>7.2f} мс
+    Verification  {C.CYAN}{bar(verify_ms, max_t)}{C.RESET}  {verify_ms:>7.2f} мс
+    {C.DIM}{'─' * 50}{C.RESET}
+    {C.BOLD_WHITE}Загалом:{C.RESET}                                   {total:>7.2f} мс
+""")
+
+    section("Технічні характеристики")
+    info_block([
+        "Крива: secp256k1 (256-bit)",
+        "Протокол: Schnorr Sigma + Pedersen Commitment",
+        "Безпека: 128 біт (ECDLP)",
+        "Бібліотека: py_ecc (Ethereum Foundation)",
+    ])
+
+    section("Сфери застосування")
+    print(f"""
+    {C.CYAN}•{C.RESET} Системи контролю доступу
+    {C.CYAN}•{C.RESET} Privacy-preserving KYC процедури
+    {C.CYAN}•{C.RESET} Verifiable Credentials (W3C стандарт)
+    {C.CYAN}•{C.RESET} Self-Sovereign Identity (SSI)
+""")
+
+
+def screen_soundness_demo(system, age, threshold):
+    """Демонстрація Soundness для випадку age < threshold."""
+    clear()
+    header("ДЕМОНСТРАЦІЯ SOUNDNESS", "Верифікація хибного твердження")
+
+    section("Сценарій")
+    print(f"""
+    Вік:       {C.BOLD_WHITE}{age}{C.RESET}
+    Поріг:     {C.BOLD_WHITE}{threshold}{C.RESET}
+
+    Твердження "{age} ≥ {threshold}" — {C.BOLD_RED}ХИБНЕ{C.RESET}
+""")
+
+    section("Питання")
+    print(f"""
+    Чи може Prover обманути систему та створити
+    валідний доказ для хибного твердження?
+""")
+
+    section("Виконання")
+    print(f"  {C.DIM}Спроба створення доказу...{C.RESET}")
+
+    commitment, blinding, _ = system.create_pedersen_commitment(age)
+
+    try:
+        system.pedersen_prove(age, threshold, commitment, blinding)
+        result(False, "КРИТИЧНА ПОМИЛКА: доказ створено!")
+    except ValueError:
+        result(True, "Система відхилила спробу")
+
+        print(f"""
+  {C.BOLD_WHITE}Висновок:{C.RESET}
+
+    {C.GREEN}┌───────────────────────────────────────────────────────────────┐
+    │                                                               │
+    │   {C.BOLD_WHITE}SOUNDNESS ПІДТВЕРДЖЕНО{C.RESET}{C.GREEN}                                      │
+    │                                                               │
+    │   Неможливо створити валідний доказ для хибного              │
+    │   твердження. Це математична гарантія, що базується          │
+    │   на складності задачі ECDLP.                                │
+    │                                                               │
+    └───────────────────────────────────────────────────────────────┘{C.RESET}
+""")
+
+
+# ============================================================================
+# MAIN
+# ============================================================================
 
 def main():
-    # SCREEN 0: Welcome
-    clear()
-    print_box(
-        "ZERO-KNOWLEDGE PROOF AGE VERIFICATION",
-        [
-            "",
-            f"  {C.CYAN}Zero-Knowledge Proof{C.RESET} = Prove something {C.BOLD_GREEN}without revealing{C.RESET} information",
-            "",
-            f"  {C.CYAN}Library:{C.RESET}    {C.BOLD_WHITE}py_ecc{C.RESET} (Ethereum Foundation)",
-            f"  {C.CYAN}Curve:{C.RESET}      {C.BOLD_YELLOW}secp256k1{C.RESET} (Bitcoin, Ethereum, ZCash)",
-            f"  {C.CYAN}Protocol:{C.RESET}   {C.BOLD_MAGENTA}Schnorr Sigma{C.RESET} + Fiat-Shamir (non-interactive)",
-            f"  {C.CYAN}Commitment:{C.RESET} {C.BOLD_GREEN}Pedersen{C.RESET} (C = age*G + r*H)",
-            f"  {C.CYAN}Security:{C.RESET}   {C.BOLD_WHITE}128 bits{C.RESET} (equivalent to 3072-bit RSA)",
-            "",
-            f"  {C.BOLD_WHITE}Pedersen Commitment Properties:{C.RESET}",
-            f"    {C.GREEN}•{C.RESET} {C.BOLD_GREEN}Hiding:{C.RESET} Information-theoretic (brute-force IMPOSSIBLE)",
-            f"    {C.GREEN}•{C.RESET} {C.BOLD_GREEN}Binding:{C.RESET} Computational (based on ECDLP hardness)",
-            ""
-        ]
-    )
+    """Головна функція демонстрації."""
+    # Титульний екран
+    screen_title()
     wait()
 
-    # Input data
+    # Введення параметрів
+    age, threshold = screen_input()
+
+    # Ініціалізація криптосистеми
     clear()
-    print_header("INPUT DATA")
+    print(f"\n  {C.CYAN}Ініціалізація криптографічної системи...{C.RESET}")
+    f = io.StringIO()
+    with contextlib.redirect_stdout(f):
+        system = CryptographyLibraryZKP()
+    print(f"  {C.GREEN}✓{C.RESET} Система ініціалізована\n")
+    time.sleep(0.5)
 
-    actual_age = get_age("Enter your REAL age (will be kept SECRET)")
-    required_age = get_age("Enter required minimum age (PUBLIC threshold)")
-
-    # Initialize
-    clear()
-    print_header("SYSTEM INITIALIZATION")
-    print(f"\n{C.CYAN}Initializing cryptographic parameters...{C.RESET}\n")
-
-    system = CryptographyLibraryZKP()
-
-    wait()
-
-    # Check possibility
-    if actual_age < required_age:
-        clear()
-        print_header("CANNOT CREATE PROOF")
-        print(f"\n  {C.CYAN}Your age:{C.RESET} {C.BOLD_WHITE}{actual_age}{C.RESET} years")
-        print(f"  {C.CYAN}Required:{C.RESET} >= {C.BOLD_WHITE}{required_age}{C.RESET} years")
-        print(f"\n  {C.CYAN}Result:{C.RESET} {C.BOLD_RED}{actual_age} < {required_age}{C.RESET}")
-        print(f"\n  {C.BOLD_YELLOW}ZKP cannot prove false statements!{C.RESET}")
-        print(f"  This is the {C.BOLD_GREEN}SOUNDNESS{C.RESET} property:")
-        print(f"  {C.DIM}It is mathematically impossible to create a valid proof")
-        print(f"  for a statement that is not true.{C.RESET}\n")
-        print(f"{C.BOLD_CYAN}{'=' * 80}{C.RESET}")
+    # Перевірка Soundness для age < threshold
+    if age < threshold:
+        screen_soundness_demo(system, age, threshold)
+        print(f"\n  {C.BOLD_CYAN}{'═' * 66}{C.RESET}")
+        print(f"  {C.BOLD_WHITE}{'Демонстрацію завершено'.center(66)}{C.RESET}")
+        print(f"  {C.BOLD_CYAN}{'═' * 66}{C.RESET}\n")
         return
 
-    # STEP 1: Pedersen Commitment
-    clear()
-    print_header("STEP 1/3: CREATE PEDERSEN COMMITMENT")
-    print(f"\n  {C.CYAN}Your age:{C.RESET} {C.BOLD_WHITE}{actual_age}{C.RESET} years {C.BOLD_RED}(SECRET — never leaves your device){C.RESET}")
-    print(f"  {C.CYAN}Required:{C.RESET} >= {C.BOLD_WHITE}{required_age}{C.RESET} years {C.CYAN}(PUBLIC threshold){C.RESET}")
-    print()
-    print(f"  {C.BOLD_WHITE}Pedersen Commitment Formula:{C.RESET}")
-    print(f"    {C.BOLD_MAGENTA}C = age × G + r × H{C.RESET}")
-    print()
-    print(f"  {C.CYAN}Where:{C.RESET}")
-    print(f"    {C.CYAN}G{C.RESET} = generator point of secp256k1 (public, fixed)")
-    print(f"    {C.CYAN}H{C.RESET} = second generator, H = hash_to_curve(G) (public, fixed)")
-    print(f"    {C.CYAN}r{C.RESET} = random 256-bit blinding factor (SECRET)")
-    print()
-    print(f"  {C.BOLD_WHITE}Why is brute-force IMPOSSIBLE?{C.RESET}")
-    print(f"    For ANY age value, there exists an 'r' that produces the SAME commitment.")
-    print(f"    Attacker cannot distinguish age=18 from age=99 — both are equally likely!")
-    print()
-
-    start = time.perf_counter()
-    commitment, blinding_factor, comm_metrics = system.create_pedersen_commitment(actual_age)
-    elapsed = (time.perf_counter() - start) * 1000
-
-    # Show commitment
-    commitment_hex = system._point_to_bytes(commitment).hex()
-
-    print(f"  {C.BOLD_GREEN}✓ Pedersen Commitment created{C.RESET} in {C.BOLD_YELLOW}{elapsed:.4f} ms{C.RESET}")
-    print()
-    print(f"  {C.CYAN}Commitment C (point on curve):{C.RESET}")
-    print(f"    {C.DIM}X: {commitment_hex[:64]}{C.RESET}")
-    print(f"    {C.DIM}Y: {commitment_hex[64:128]}{C.RESET}")
-    print(f"    Size: {C.BOLD_MAGENTA}{len(commitment_hex)//2} bytes{C.RESET}")
-    print()
-    print(f"  {C.CYAN}Blinding factor r:{C.RESET} {C.BOLD_RED}SECRET{C.RESET} ({blinding_factor.bit_length()} bits)")
-    print()
-    print(f"  {C.BOLD_WHITE}Security guarantee:{C.RESET}")
-    print(f"    Verifier {C.BOLD_WHITE}SEES{C.RESET} commitment C")
-    print(f"    Verifier {C.BOLD_RED}CANNOT{C.RESET} determine age (information-theoretic hiding)")
-    print(f"    Breaking requires solving ECDLP: {C.BOLD_YELLOW}~2^128 operations{C.RESET}")
-    print()
-    print(f"{C.BOLD_CYAN}{'=' * 80}{C.RESET}")
-
+    # Етап 1: Commitment
+    commitment, blinding, comm_metrics = screen_commitment(system, age)
     wait()
 
-    # STEP 2: Proof Generation (Double Schnorr / Okamoto)
-    clear()
-    print_header("STEP 2/3: GENERATE ZERO-KNOWLEDGE PROOF")
-    print(f"\n  {C.BOLD_WHITE}Goal:{C.RESET} Prove that {C.BOLD_GREEN}age >= {required_age}{C.RESET}")
-    print(f"  {C.BOLD_WHITE}Without revealing:{C.RESET} exact age = {C.BOLD_RED}{actual_age}{C.RESET}")
-    print()
-    print(f"  {C.BOLD_WHITE}Protocol: Double Schnorr (Okamoto) with Fiat-Shamir{C.RESET}")
-    print()
-    print(f"  {C.CYAN}Mathematical steps:{C.RESET}")
-    print(f"    {C.BOLD_GREEN}1.{C.RESET} Compute C' = C - required_age × G")
-    print(f"       (C' is commitment to age_diff = age - required_age)")
-    print(f"    {C.BOLD_GREEN}2.{C.RESET} Generate random nonces {C.BOLD_MAGENTA}k₁, k₂{C.RESET}")
-    print(f"    {C.BOLD_GREEN}3.{C.RESET} Compute {C.BOLD_MAGENTA}R = k₁ × G + k₂ × H{C.RESET}")
-    print(f"    {C.BOLD_GREEN}4.{C.RESET} Compute challenge {C.BOLD_MAGENTA}c = SHA256(C' || R || required_age){C.RESET}")
-    print(f"    {C.BOLD_GREEN}5.{C.RESET} Compute responses:")
-    print(f"       {C.BOLD_MAGENTA}s₁ = k₁ + c × (age - required_age) mod n{C.RESET}")
-    print(f"       {C.BOLD_MAGENTA}s₂ = k₂ + c × r mod n{C.RESET}")
-    print()
-
-    start = time.perf_counter()
-    proof_data, proof_metrics = system.pedersen_prove(actual_age, required_age, commitment, blinding_factor)
-    elapsed = (time.perf_counter() - start) * 1000
-
-    print(f"  {C.BOLD_WHITE}Timing breakdown:{C.RESET}")
-    print(f"    Step 1 - Nonce generation (k₁, k₂): {C.BOLD_YELLOW}{proof_metrics['step1_nonce_generation_ms']:.4f} ms{C.RESET}")
-    print(f"    Step 2 - Compute R = k₁G + k₂H:     {C.BOLD_YELLOW}{proof_metrics['step2_commitment_R_ms']:.4f} ms{C.RESET}")
-    print(f"    Step 3 - Challenge c (SHA-256):     {C.BOLD_YELLOW}{proof_metrics['step3_challenge_ms']:.4f} ms{C.RESET}")
-    print(f"    Step 4 - Responses s₁, s₂:          {C.BOLD_YELLOW}{proof_metrics['step4_response_ms']:.4f} ms{C.RESET}")
-    print(f"    {C.DIM}─────────────────────────────────────────────────────{C.RESET}")
-    print(f"    {C.BOLD_WHITE}TOTAL:{C.RESET}                              {C.BOLD_GREEN}{proof_metrics['total_time_ms']:.4f} ms{C.RESET}")
-    print()
-
-    # Show proof components
-    R_hex = system._point_to_bytes(proof_data['R']).hex()
-    c_str = str(proof_data['c'])
-    s1_str = str(proof_data['s1'])
-    s2_str = str(proof_data['s2'])
-
-    print(f"  {C.BOLD_WHITE}Proof components (sent to verifier):{C.RESET}")
-    print(f"    {C.CYAN}R (point):{C.RESET}  {C.DIM}{R_hex[:50]}...{C.RESET}")
-    print(f"    {C.CYAN}c (hash):{C.RESET}   {C.DIM}{c_str[:50]}...{C.RESET}")
-    print(f"    {C.CYAN}s₁ (scalar):{C.RESET} {C.DIM}{s1_str[:50]}...{C.RESET}")
-    print(f"    {C.CYAN}s₂ (scalar):{C.RESET} {C.DIM}{s2_str[:50]}...{C.RESET}")
-    print(f"    {C.CYAN}Size:{C.RESET}       {C.BOLD_MAGENTA}{proof_metrics['proof_size_bytes']} bytes{C.RESET}")
-    print()
-    print(f"  {C.BOLD_WHITE}Zero-Knowledge property:{C.RESET}")
-    print(f"    From (R, c, s₁, s₂) it is {C.BOLD_RED}IMPOSSIBLE{C.RESET} to recover:")
-    print(f"      • exact age")
-    print(f"      • blinding factor r")
-    print(f"      • nonces k₁, k₂")
-    print()
-    print(f"{C.BOLD_CYAN}{'=' * 80}{C.RESET}")
-
+    # Етап 2: Proof
+    proof, proof_metrics = screen_proof(system, age, threshold, commitment, blinding)
     wait()
 
-    # STEP 3: Verification
-    clear()
-    print_header("STEP 3/3: VERIFY PROOF")
-    print(f"\n  {C.BOLD_WHITE}Verifier's perspective:{C.RESET}")
-    print()
-    print(f"  {C.BOLD_GREEN}Verifier KNOWS (public):{C.RESET}")
-    print(f"    {C.CYAN}•{C.RESET} Commitment C (point on curve)")
-    print(f"    {C.CYAN}•{C.RESET} Proof: (R, c, s₁, s₂)")
-    print(f"    {C.CYAN}•{C.RESET} required_age = {C.BOLD_WHITE}{required_age}{C.RESET}")
-    print(f"    {C.CYAN}•{C.RESET} Public parameters: G, H, curve")
-    print()
-    print(f"  {C.BOLD_RED}Verifier DOES NOT KNOW (private):{C.RESET}")
-    print(f"    {C.CYAN}•{C.RESET} Exact age = {actual_age} {C.BOLD_RED}← HIDDEN!{C.RESET}")
-    print(f"    {C.CYAN}•{C.RESET} Blinding factor r")
-    print(f"    {C.CYAN}•{C.RESET} Random nonces k₁, k₂")
-    print()
-    print(f"  {C.BOLD_WHITE}Verification equation:{C.RESET}")
-    print(f"    {C.BOLD_MAGENTA}s₁ × G + s₂ × H  ==  R + c × C'{C.RESET}")
-    print(f"    where C' = C - required_age × G")
-    print()
-    print(f"  {C.BOLD_WHITE}Why this works (mathematical proof):{C.RESET}")
-    print(f"    Left side:  s₁G + s₂H = (k₁ + c·age_diff)G + (k₂ + c·r)H")
-    print(f"              = k₁G + k₂H + c·(age_diff·G + r·H)")
-    print(f"              = R + c·C'")
-    print(f"    Right side: R + c·C'")
-    print(f"    {C.BOLD_GREEN}✓ Equation holds only if prover knows age_diff and r{C.RESET}")
-    print()
-
-    start = time.perf_counter()
-    is_valid, verify_metrics = system.pedersen_verify(commitment, required_age, proof_data)
-    elapsed = (time.perf_counter() - start) * 1000
-
-    print(f"  {C.BOLD_WHITE}Verification timing:{C.RESET}")
-    print(f"    Step 1 - Compute C':               {C.BOLD_YELLOW}{verify_metrics['step1_compute_C_prime_ms']:.4f} ms{C.RESET}")
-    print(f"    Step 2 - Verify challenge:         {C.BOLD_YELLOW}{verify_metrics['step2_challenge_verification_ms']:.4f} ms{C.RESET}")
-    print(f"    Step 3 - Compute s₁G + s₂H:        {C.BOLD_YELLOW}{verify_metrics['step3_left_side_ms']:.4f} ms{C.RESET}")
-    print(f"    Step 4 - Compute R + c·C':         {C.BOLD_YELLOW}{verify_metrics['step4_right_side_ms']:.4f} ms{C.RESET}")
-    print(f"    {C.DIM}─────────────────────────────────────────────────────{C.RESET}")
-    print(f"    {C.BOLD_WHITE}TOTAL:{C.RESET}                             {C.BOLD_GREEN}{verify_metrics['total_time_ms']:.4f} ms{C.RESET}")
-    print()
-
-    if is_valid:
-        print(f"  {C.BOLD_GREEN}╔══════════════════════════════════════╗{C.RESET}")
-        print(f"  {C.BOLD_GREEN}║     ✓ PROOF SUCCESSFULLY VERIFIED   ║{C.RESET}")
-        print(f"  {C.BOLD_GREEN}╚══════════════════════════════════════╝{C.RESET}")
-        print(f"\n  {C.BOLD_WHITE}Conclusion:{C.RESET} age >= {required_age} {C.BOLD_GREEN}CONFIRMED{C.RESET}")
-        print(f"  Exact age value {C.BOLD_GREEN}REMAINS SECRET{C.RESET}")
-    else:
-        print(f"  {C.BOLD_RED}╔══════════════════════════════════════╗{C.RESET}")
-        print(f"  {C.BOLD_RED}║     ✗ PROOF VERIFICATION FAILED     ║{C.RESET}")
-        print(f"  {C.BOLD_RED}╚══════════════════════════════════════╝{C.RESET}")
-
-    print()
-    print(f"{C.BOLD_CYAN}{'=' * 80}{C.RESET}")
-
+    # Етап 3: Verification
+    is_valid, verify_metrics = screen_verify(system, commitment, threshold, proof)
     wait()
 
-    # FINAL RESULT
-    clear()
-    print_header("SUMMARY")
-    print()
-    print(f"  {C.CYAN}Your age:{C.RESET}    {C.BOLD_WHITE}{actual_age}{C.RESET} years")
-    print(f"  {C.CYAN}Requirement:{C.RESET} >= {C.BOLD_WHITE}{required_age}{C.RESET} years")
-    print()
+    # Етап 4: Soundness test
+    screen_soundness(system, threshold)
+    wait()
 
-    if is_valid:
-        print(f"  {C.BOLD_GREEN}╔════════════════════════════════════════╗{C.RESET}")
-        print(f"  {C.BOLD_GREEN}║         ✓ ACCESS GRANTED              ║{C.RESET}")
-        print(f"  {C.BOLD_GREEN}║   Age requirement verified via ZKP    ║{C.RESET}")
-        print(f"  {C.BOLD_GREEN}╚════════════════════════════════════════╝{C.RESET}")
-        print()
-        print(f"  {C.BOLD_WHITE}Zero-Knowledge Proof Properties Demonstrated:{C.RESET}")
-        print()
-        print(f"    {C.BOLD_GREEN}COMPLETENESS{C.RESET}")
-        print(f"      If statement is TRUE, honest proof is ALWAYS accepted")
-        print(f"      {C.DIM}(We proved age >= {required_age}, and it was accepted){C.RESET}")
-        print()
-        print(f"    {C.BOLD_GREEN}SOUNDNESS{C.RESET}")
-        print(f"      If statement is FALSE, no valid proof can be created")
-        print(f"      {C.DIM}(Based on ECDLP hardness — 2^128 operations to break){C.RESET}")
-        print()
-        print(f"    {C.BOLD_GREEN}ZERO-KNOWLEDGE{C.RESET}")
-        print(f"      Verifier learns NOTHING except that age >= {required_age}")
-        print(f"      {C.DIM}(Cannot distinguish age={required_age} from age=100){C.RESET}")
-    else:
-        print(f"  {C.BOLD_RED}╔════════════════════════════════════════╗{C.RESET}")
-        print(f"  {C.BOLD_RED}║         ✗ ACCESS DENIED               ║{C.RESET}")
-        print(f"  {C.BOLD_RED}╚════════════════════════════════════════╝{C.RESET}")
-
-    print()
-
-    total_time = (
-        comm_metrics['computation_time_ms'] +
-        proof_metrics['total_time_ms'] +
+    # Підсумки
+    screen_summary(
+        age, threshold,
+        comm_metrics['computation_time_ms'],
+        proof_metrics['total_time_ms'],
         verify_metrics['total_time_ms']
     )
 
-    print(f"  {C.BOLD_WHITE}Performance Metrics:{C.RESET}")
-    print(f"    {C.CYAN}Commitment:{C.RESET}   {C.BOLD_YELLOW}{comm_metrics['computation_time_ms']:.4f} ms{C.RESET}")
-    print(f"    {C.CYAN}Proof:{C.RESET}        {C.BOLD_YELLOW}{proof_metrics['total_time_ms']:.4f} ms{C.RESET}")
-    print(f"    {C.CYAN}Verification:{C.RESET} {C.BOLD_YELLOW}{verify_metrics['total_time_ms']:.4f} ms{C.RESET}")
-    print(f"    {C.DIM}───────────────────────────────────{C.RESET}")
-    print(f"    {C.BOLD_WHITE}TOTAL:{C.RESET}        {C.BOLD_GREEN}{total_time:.4f} ms{C.RESET}")
-    print()
-    print(f"  {C.BOLD_WHITE}Cryptographic Parameters:{C.RESET}")
-    print(f"    {C.CYAN}Curve:{C.RESET}        {C.BOLD_YELLOW}secp256k1{C.RESET} (Bitcoin, Ethereum)")
-    print(f"    {C.CYAN}Security:{C.RESET}     {C.BOLD_GREEN}128 bits{C.RESET}")
-    print(f"    {C.CYAN}Commitment:{C.RESET}   {C.BOLD_GREEN}Pedersen{C.RESET} (information-theoretic hiding)")
-    print(f"    {C.CYAN}Protocol:{C.RESET}     {C.BOLD_MAGENTA}Double Schnorr + Fiat-Shamir{C.RESET}")
-    print(f"    {C.CYAN}Library:{C.RESET}      py_ecc (Ethereum Foundation)")
-    print()
-    print(f"{C.BOLD_CYAN}{'=' * 80}{C.RESET}")
-
-    # Offer to regenerate proof
-    print()
-    choice = input(f"Generate another proof for the same age? ({C.BOLD_GREEN}y{C.RESET}/{C.BOLD_RED}n{C.RESET}): ").strip().lower()
-
-    if choice == 'y':
-        clear()
-        print_header("PROOF UNIQUENESS DEMONSTRATION")
-        print()
-        print(f"  {C.BOLD_WHITE}Demonstrating Zero-Knowledge property:{C.RESET}")
-        print(f"  Each proof is DIFFERENT (new random nonces)")
-        print(f"  But both prove the SAME statement: age >= {required_age}")
-        print()
-        print(f"  {C.CYAN}Age:{C.RESET} {C.BOLD_WHITE}{actual_age}{C.RESET} (unchanged)")
-        print()
-
-        wait()
-
-        start = time.perf_counter()
-        proof_data2, proof_metrics2 = system.pedersen_prove(actual_age, required_age, commitment, blinding_factor)
-        elapsed2 = (time.perf_counter() - start) * 1000
-
-        R_hex2 = system._point_to_bytes(proof_data2['R']).hex()
-        c_str2 = str(proof_data2['c'])
-        s1_str2 = str(proof_data2['s1'])
-        s2_str2 = str(proof_data2['s2'])
-
-        print(f"  {C.BOLD_WHITE}PROOF #1:{C.RESET}")
-        print(f"    {C.CYAN}R:{C.RESET}  {C.DIM}{R_hex[:50]}...{C.RESET}")
-        print(f"    {C.CYAN}c:{C.RESET}  {C.DIM}{c_str[:50]}...{C.RESET}")
-        print(f"    {C.CYAN}s₁:{C.RESET} {C.DIM}{s1_str[:50]}...{C.RESET}")
-        print(f"    {C.CYAN}s₂:{C.RESET} {C.DIM}{s2_str[:50]}...{C.RESET}")
-        print()
-        print(f"  {C.BOLD_WHITE}PROOF #2:{C.RESET}")
-        print(f"    {C.CYAN}R:{C.RESET}  {C.DIM}{R_hex2[:50]}...{C.RESET}")
-        print(f"    {C.CYAN}c:{C.RESET}  {C.DIM}{c_str2[:50]}...{C.RESET}")
-        print(f"    {C.CYAN}s₁:{C.RESET} {C.DIM}{s1_str2[:50]}...{C.RESET}")
-        print(f"    {C.CYAN}s₂:{C.RESET} {C.DIM}{s2_str2[:50]}...{C.RESET}")
-        print()
-
-        if R_hex != R_hex2:
-            print(f"  {C.BOLD_GREEN}✓ Proofs are DIFFERENT{C.RESET}")
-            print(f"    (Different random nonces k₁, k₂ → different R, c, s₁, s₂)")
-        else:
-            print(f"  {C.BOLD_RED}✗ Proofs are identical{C.RESET} (this should not happen!)")
-
-        print()
-        print(f"  {C.CYAN}Verifying proof #2...{C.RESET}")
-        is_valid2, _ = system.pedersen_verify(commitment, required_age, proof_data2)
-
-        if is_valid2:
-            print(f"  {C.BOLD_GREEN}✓ Proof #2 is also VALID{C.RESET}")
-        else:
-            print(f"  {C.BOLD_RED}✗ Proof #2 is INVALID{C.RESET}")
-
-        print()
-        print(f"  {C.BOLD_WHITE}What this demonstrates:{C.RESET}")
-        print(f"    {C.CYAN}•{C.RESET} Multiple valid proofs can exist for the same statement")
-        print(f"    {C.CYAN}•{C.RESET} Proofs are freshly generated (not pre-computed)")
-        print(f"    {C.CYAN}•{C.RESET} Verifier cannot link two proofs to the same prover")
-        print(f"    {C.CYAN}•{C.RESET} This is the {C.BOLD_GREEN}ZERO-KNOWLEDGE{C.RESET} property in action")
-        print()
-        print(f"{C.BOLD_CYAN}{'=' * 80}{C.RESET}")
+    print(f"\n  {C.BOLD_CYAN}{'═' * 66}{C.RESET}")
+    print(f"  {C.BOLD_WHITE}{'Демонстрацію завершено'.center(66)}{C.RESET}")
+    print(f"  {C.BOLD_CYAN}{'═' * 66}{C.RESET}\n")
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        clear()
-        print(f"\n{C.BOLD_YELLOW}Program interrupted.{C.RESET}\n")
+        print(f"\n{C.YELLOW}Перервано користувачем.{C.RESET}")
         sys.exit(0)

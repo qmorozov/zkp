@@ -118,9 +118,18 @@ class ProtocolBenchmark:
         except subprocess.TimeoutExpired:
             return False, "Timeout", 0
 
+    def _print_progress(self, current: int, total: int, protocol: str, width: int = 30):
+        """Print a progress bar."""
+        percent = current / total
+        filled = int(width * percent)
+        bar = "█" * filled + "░" * (width - filled)
+        print(f"\r  {C.CYAN}{protocol:<10}{C.RESET} [{C.GREEN}{bar}{C.RESET}] {current}/{total} ({percent*100:.0f}%)", end="", flush=True)
+        if current == total:
+            print()  # New line when done
+
     def benchmark_schnorr(self) -> BenchmarkResult:
-        """Benchmark Schnorr Sigma Protocol."""
-        print(f"\n  Benchmarking Schnorr Protocol ({self.iterations} iterations)...")
+        """Бенчмарк Schnorr Sigma Protocol."""
+        print(f"\n{C.BOLD_WHITE}▶ Schnorr Sigma Protocol{C.RESET}")
 
         result = BenchmarkResult(protocol_name="Schnorr")
         zkp = CryptographyLibraryZKP()
@@ -155,15 +164,15 @@ class ProtocolBenchmark:
             if not is_valid:
                 result.all_valid = False
 
-            if (i + 1) % 20 == 0:
-                print(f"    Progress: {i + 1}/{self.iterations}")
+            self._print_progress(i + 1, self.iterations, "Schnorr")
 
         result.iterations = self.iterations
+        print(f"  {C.GREEN}✓{C.RESET} Завершено: {C.BOLD_YELLOW}{result.prove_mean:.2f} мс{C.RESET} prove, {C.BOLD_YELLOW}{result.verify_mean:.2f} мс{C.RESET} verify")
         return result
 
     def benchmark_groth16(self) -> BenchmarkResult:
-        """Benchmark Groth16 zk-SNARK."""
-        print(f"\n  Benchmarking Groth16 ({self.iterations} iterations)...")
+        """Бенчмарк Groth16 zk-SNARK."""
+        print(f"\n{C.BOLD_WHITE}▶ Groth16 zk-SNARK{C.RESET}")
 
         result = BenchmarkResult(protocol_name="Groth16")
 
@@ -174,11 +183,8 @@ class ProtocolBenchmark:
         witness_gen = self.circuits_path / "age_check_js" / "generate_witness.js"
 
         if not all(p.exists() for p in [zkey_path, vkey_path, wasm_path]):
-            print("    ERROR: Groth16 setup files not found. Run setup first.")
+            print(f"  {C.YELLOW}⚠{C.RESET} Groth16 setup files not found. Run: npm run compile")
             return result
-
-        # Setup is already done, so setup time is 0 for runtime benchmarks
-        # (setup is one-time cost)
 
         for i in range(self.iterations):
             result.setup_times.append(0)  # Setup already done
@@ -236,15 +242,16 @@ class ProtocolBenchmark:
                     if os.path.exists(p):
                         os.unlink(p)
 
-            if (i + 1) % 20 == 0:
-                print(f"    Progress: {i + 1}/{self.iterations}")
+            self._print_progress(i + 1, self.iterations, "Groth16")
 
         result.iterations = self.iterations
+        if result.prove_times:
+            print(f"  {C.GREEN}✓{C.RESET} Завершено: {C.BOLD_YELLOW}{result.prove_mean:.2f} мс{C.RESET} prove, {C.BOLD_YELLOW}{result.verify_mean:.2f} мс{C.RESET} verify")
         return result
 
     def benchmark_plonk(self) -> BenchmarkResult:
-        """Benchmark PLONK zk-SNARK."""
-        print(f"\n  Benchmarking PLONK ({self.iterations} iterations)...")
+        """Бенчмарк PLONK zk-SNARK."""
+        print(f"\n{C.BOLD_WHITE}▶ PLONK zk-SNARK{C.RESET}")
 
         result = BenchmarkResult(protocol_name="PLONK")
 
@@ -255,7 +262,7 @@ class ProtocolBenchmark:
         witness_gen = self.circuits_path / "age_check_js" / "generate_witness.js"
 
         if not all(p.exists() for p in [zkey_path, vkey_path, wasm_path]):
-            print("    ERROR: PLONK setup files not found. Run setup first.")
+            print(f"  {C.YELLOW}⚠{C.RESET} PLONK setup files not found. Run: npm run compile")
             return result
 
         for i in range(self.iterations):
@@ -311,19 +318,20 @@ class ProtocolBenchmark:
                     if os.path.exists(p):
                         os.unlink(p)
 
-            if (i + 1) % 20 == 0:
-                print(f"    Progress: {i + 1}/{self.iterations}")
+            self._print_progress(i + 1, self.iterations, "PLONK")
 
         result.iterations = self.iterations
+        if result.prove_times:
+            print(f"  {C.GREEN}✓{C.RESET} Завершено: {C.BOLD_YELLOW}{result.prove_mean:.2f} мс{C.RESET} prove, {C.BOLD_YELLOW}{result.verify_mean:.2f} мс{C.RESET} verify")
         return result
 
     def run_all(self) -> Dict[str, BenchmarkResult]:
-        """Run all benchmarks."""
+        """Запуск усіх бенчмарків."""
         print("=" * 70)
-        print("ZERO-KNOWLEDGE PROOF PROTOCOL BENCHMARKS")
+        print("БЕНЧМАРК ZK-ПРОТОКОЛІВ")
         print("=" * 70)
-        print(f"Iterations: {self.iterations}")
-        print(f"Test case: age={self.age}, required_age={self.required_age}")
+        print(f"Ітерацій: {self.iterations}")
+        print(f"Тестовий сценарій: вік={self.age}, поріг={self.required_age}")
 
         self.results['schnorr'] = self.benchmark_schnorr()
         self.results['groth16'] = self.benchmark_groth16()
@@ -331,14 +339,26 @@ class ProtocolBenchmark:
 
         return self.results
 
+    def _make_bar(self, value: float, max_value: float, width: int = 30, char: str = "█") -> str:
+        """Create an ASCII bar."""
+        if max_value == 0:
+            return ""
+        filled = int((value / max_value) * width)
+        return char * filled + "░" * (width - filled)
+
+    def _get_medal(self, rank: int) -> str:
+        """Get medal emoji for ranking."""
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        return medals.get(rank, "  ")
+
     def print_results(self):
-        """Print benchmark results in a formatted table."""
+        """Виведення результатів бенчмарку."""
         print("\n")
-        print(f"{C.BOLD_CYAN}{'=' * 80}{C.RESET}")
-        print(f"{C.BOLD_WHITE}ZK PROTOCOL COMPARISON RESULTS{C.RESET}")
-        print(f"{C.BOLD_CYAN}{'=' * 80}{C.RESET}")
-        print(f"{C.BOLD_WHITE}{'Protocol':<12} {'Setup (ms)':<14} {'Prove (ms)':<14} {'Verify (ms)':<14} {'Proof (B)':<12} {'Valid':<8}{C.RESET}")
-        print(f"{C.DIM}{'-' * 80}{C.RESET}")
+        print(f"{C.BOLD_CYAN}{'═' * 80}{C.RESET}")
+        print(f"{C.BOLD_WHITE}{'РЕЗУЛЬТАТИ ПОРІВНЯННЯ ZK-ПРОТОКОЛІВ'.center(80)}{C.RESET}")
+        print(f"{C.BOLD_CYAN}{'═' * 80}{C.RESET}")
+        print(f"{C.BOLD_WHITE}{'Протокол':<12} {'Setup (мс)':<14} {'Prove (мс)':<14} {'Verify (мс)':<14} {'Proof (Б)':<12} {'Валід':<8}{C.RESET}")
+        print(f"{C.DIM}{'─' * 80}{C.RESET}")
 
         for name, result in self.results.items():
             if result.iterations == 0:
@@ -352,15 +372,117 @@ class ProtocolBenchmark:
 
                 print(f"{C.BOLD_CYAN}{result.protocol_name:<12}{C.RESET} {C.YELLOW}{setup_str:<14}{C.RESET} {C.YELLOW}{prove_str:<14}{C.RESET} {C.YELLOW}{verify_str:<14}{C.RESET} {C.BOLD_MAGENTA}{size_str:<12}{C.RESET} {valid_str}")
 
-        print(f"{C.DIM}{'-' * 80}{C.RESET}")
-        print(f"Iterations: {C.BOLD_WHITE}{self.iterations}{C.RESET}")
+        print(f"{C.DIM}{'─' * 80}{C.RESET}")
+        print(f"Ітерацій: {C.BOLD_WHITE}{self.iterations}{C.RESET}")
         print()
 
+    def print_ascii_charts(self):
+        """Виведення ASCII-графіків для візуального порівняння."""
+        # Filter protocols with data
+        valid_results = [(name, r) for name, r in self.results.items() if r.iterations > 0]
+        if not valid_results:
+            return
+
+        print(f"\n{C.BOLD_CYAN}{'═' * 70}{C.RESET}")
+        print(f"{C.BOLD_WHITE}{'ВІЗУАЛЬНЕ ПОРІВНЯННЯ'.center(70)}{C.RESET}")
+        print(f"{C.BOLD_CYAN}{'═' * 70}{C.RESET}")
+
+        # Prove Time Chart
+        print(f"\n{C.BOLD_YELLOW}⏱  ЧАС ГЕНЕРАЦІЇ (мс){C.RESET}")
+        print(f"{C.DIM}{'─' * 60}{C.RESET}")
+        prove_times = [(r.protocol_name, r.prove_mean) for _, r in valid_results]
+        max_prove = max(t[1] for t in prove_times) if prove_times else 1
+        prove_sorted = sorted(prove_times, key=lambda x: x[1])
+
+        for i, (name, value) in enumerate(prove_sorted):
+            bar = self._make_bar(value, max_prove, 35)
+            medal = self._get_medal(i + 1)
+            color = C.GREEN if i == 0 else (C.YELLOW if i == 1 else C.WHITE)
+            print(f"  {medal} {name:<10} {color}{bar}{C.RESET} {C.BOLD_WHITE}{value:>8.2f}{C.RESET} ms")
+
+        # Verify Time Chart
+        print(f"\n{C.BOLD_YELLOW}✓  ЧАС ВЕРИФІКАЦІЇ (мс){C.RESET}")
+        print(f"{C.DIM}{'─' * 60}{C.RESET}")
+        verify_times = [(r.protocol_name, r.verify_mean) for _, r in valid_results]
+        max_verify = max(t[1] for t in verify_times) if verify_times else 1
+        verify_sorted = sorted(verify_times, key=lambda x: x[1])
+
+        for i, (name, value) in enumerate(verify_sorted):
+            bar = self._make_bar(value, max_verify, 35)
+            medal = self._get_medal(i + 1)
+            color = C.GREEN if i == 0 else (C.YELLOW if i == 1 else C.WHITE)
+            print(f"  {medal} {name:<10} {color}{bar}{C.RESET} {C.BOLD_WHITE}{value:>8.2f}{C.RESET} мс")
+
+        # Proof Size Chart
+        print(f"\n{C.BOLD_YELLOW}📦 РОЗМІР ДОКАЗУ (байт){C.RESET}")
+        print(f"{C.DIM}{'─' * 60}{C.RESET}")
+        proof_sizes = [(r.protocol_name, r.proof_size_mean) for _, r in valid_results]
+        max_size = max(t[1] for t in proof_sizes) if proof_sizes else 1
+        size_sorted = sorted(proof_sizes, key=lambda x: x[1])
+
+        for i, (name, value) in enumerate(size_sorted):
+            bar = self._make_bar(value, max_size, 35)
+            medal = self._get_medal(i + 1)
+            color = C.GREEN if i == 0 else (C.YELLOW if i == 1 else C.WHITE)
+            print(f"  {medal} {name:<10} {color}{bar}{C.RESET} {C.BOLD_WHITE}{value:>8.0f}{C.RESET} Б")
+
+        # Total Time Chart
+        print(f"\n{C.BOLD_YELLOW}Σ  ЗАГАЛЬНИЙ ЧАС (prove + verify){C.RESET}")
+        print(f"{C.DIM}{'─' * 60}{C.RESET}")
+        total_times = [(r.protocol_name, r.prove_mean + r.verify_mean) for _, r in valid_results]
+        max_total = max(t[1] for t in total_times) if total_times else 1
+        total_sorted = sorted(total_times, key=lambda x: x[1])
+
+        for i, (name, value) in enumerate(total_sorted):
+            bar = self._make_bar(value, max_total, 35)
+            medal = self._get_medal(i + 1)
+            color = C.GREEN if i == 0 else (C.YELLOW if i == 1 else C.WHITE)
+            print(f"  {medal} {name:<10} {color}{bar}{C.RESET} {C.BOLD_WHITE}{value:>8.2f}{C.RESET} мс")
+
+    def print_rankings(self):
+        """Виведення рейтингу та рекомендацій."""
+        valid_results = [(name, r) for name, r in self.results.items() if r.iterations > 0]
+        if not valid_results:
+            return
+
+        print(f"\n{C.BOLD_CYAN}{'═' * 70}{C.RESET}")
+        print(f"{C.BOLD_WHITE}{'РЕЙТИНГ ТА РЕКОМЕНДАЦІЇ'.center(70)}{C.RESET}")
+        print(f"{C.BOLD_CYAN}{'═' * 70}{C.RESET}")
+
+        # Find winners
+        fastest_prove = min(valid_results, key=lambda x: x[1].prove_mean)
+        fastest_verify = min(valid_results, key=lambda x: x[1].verify_mean)
+        smallest_proof = min(valid_results, key=lambda x: x[1].proof_size_mean)
+        fastest_total = min(valid_results, key=lambda x: x[1].prove_mean + x[1].verify_mean)
+
+        print(f"""
+  {C.BOLD_GREEN}🏆 ЛІДЕРИ ЗА КАТЕГОРІЯМИ:{C.RESET}
+
+  {C.CYAN}Швидкість генерації:{C.RESET}  🥇 {C.BOLD_WHITE}{fastest_prove[1].protocol_name}{C.RESET} ({fastest_prove[1].prove_mean:.2f} мс)
+  {C.CYAN}Швидкість верифікації:{C.RESET}🥇 {C.BOLD_WHITE}{fastest_verify[1].protocol_name}{C.RESET} ({fastest_verify[1].verify_mean:.2f} мс)
+  {C.CYAN}Найменший доказ:{C.RESET}      🥇 {C.BOLD_WHITE}{smallest_proof[1].protocol_name}{C.RESET} ({smallest_proof[1].proof_size_mean:.0f} байт)
+  {C.CYAN}Загальна швидкість:{C.RESET}   🥇 {C.BOLD_WHITE}{fastest_total[1].protocol_name}{C.RESET} ({fastest_total[1].prove_mean + fastest_total[1].verify_mean:.2f} мс)
+""")
+
+        print(f"  {C.BOLD_WHITE}📋 РЕКОМЕНДАЦІЇ ДЛЯ ЗАСТОСУВАННЯ:{C.RESET}")
+        print(f"""
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ {C.BOLD_CYAN}Real-time верифікація{C.RESET}          → {C.BOLD_WHITE}{fastest_total[1].protocol_name}{C.RESET}                         │
+  │   {C.DIM}(найменша затримка для інтерактивних додатків){C.RESET}              │
+  │                                                                 │
+  │ {C.BOLD_CYAN}Обмежений канал зв'язку{C.RESET}        → {C.BOLD_WHITE}{smallest_proof[1].protocol_name}{C.RESET}                          │
+  │   {C.DIM}(найменший розмір доказу для mobile/IoT){C.RESET}                    │
+  │                                                                 │
+  │ {C.BOLD_CYAN}Blockchain/On-chain{C.RESET}            → {C.BOLD_WHITE}{smallest_proof[1].protocol_name}{C.RESET}                          │
+  │   {C.DIM}(витрати gas пропорційні розміру доказу){C.RESET}                    │
+  └─────────────────────────────────────────────────────────────────┘
+""")
+
     def print_detailed_stats(self):
-        """Print detailed statistics for each protocol."""
+        """Виведення детальної статистики."""
         print("\n")
         print(f"{C.BOLD_CYAN}{'=' * 70}{C.RESET}")
-        print(f"{C.BOLD_WHITE}DETAILED STATISTICS{C.RESET}")
+        print(f"{C.BOLD_WHITE}ДЕТАЛЬНА СТАТИСТИКА{C.RESET}")
         print(f"{C.BOLD_CYAN}{'=' * 70}{C.RESET}")
 
         for name, result in self.results.items():
@@ -368,25 +490,25 @@ class ProtocolBenchmark:
                 continue
 
             print(f"\n{C.BOLD_GREEN}{result.protocol_name}:{C.RESET}")
-            print(f"  {C.CYAN}Setup time:{C.RESET}")
-            print(f"    Mean: {C.BOLD_YELLOW}{result.setup_mean:.3f} ms{C.RESET}")
-            print(f"    Std:  {result.setup_std:.3f} ms")
-            print(f"    Min:  {min(result.setup_times):.3f} ms")
-            print(f"    Max:  {max(result.setup_times):.3f} ms")
+            print(f"  {C.CYAN}Час setup:{C.RESET}")
+            print(f"    Mean: {C.BOLD_YELLOW}{result.setup_mean:.3f} мс{C.RESET}")
+            print(f"    Std:  {result.setup_std:.3f} мс")
+            print(f"    Min:  {min(result.setup_times):.3f} мс")
+            print(f"    Max:  {max(result.setup_times):.3f} мс")
 
-            print(f"  {C.CYAN}Prove time:{C.RESET}")
-            print(f"    Mean: {C.BOLD_YELLOW}{result.prove_mean:.3f} ms{C.RESET}")
-            print(f"    Std:  {result.prove_std:.3f} ms")
-            print(f"    Min:  {min(result.prove_times):.3f} ms")
-            print(f"    Max:  {max(result.prove_times):.3f} ms")
+            print(f"  {C.CYAN}Час генерації:{C.RESET}")
+            print(f"    Mean: {C.BOLD_YELLOW}{result.prove_mean:.3f} мс{C.RESET}")
+            print(f"    Std:  {result.prove_std:.3f} мс")
+            print(f"    Min:  {min(result.prove_times):.3f} мс")
+            print(f"    Max:  {max(result.prove_times):.3f} мс")
 
-            print(f"  {C.CYAN}Verify time:{C.RESET}")
-            print(f"    Mean: {C.BOLD_YELLOW}{result.verify_mean:.3f} ms{C.RESET}")
-            print(f"    Std:  {result.verify_std:.3f} ms")
-            print(f"    Min:  {min(result.verify_times):.3f} ms")
-            print(f"    Max:  {max(result.verify_times):.3f} ms")
+            print(f"  {C.CYAN}Час верифікації:{C.RESET}")
+            print(f"    Mean: {C.BOLD_YELLOW}{result.verify_mean:.3f} мс{C.RESET}")
+            print(f"    Std:  {result.verify_std:.3f} мс")
+            print(f"    Min:  {min(result.verify_times):.3f} мс")
+            print(f"    Max:  {max(result.verify_times):.3f} мс")
 
-            print(f"  {C.CYAN}Proof size:{C.RESET} {C.BOLD_MAGENTA}{result.proof_size_mean:.0f} bytes{C.RESET}")
+            print(f"  {C.CYAN}Розмір доказу:{C.RESET} {C.BOLD_MAGENTA}{result.proof_size_mean:.0f} байт{C.RESET}")
 
     def export_to_csv(self, filename: str):
         """Export results to CSV file."""
@@ -449,6 +571,201 @@ class ProtocolBenchmark:
             f.write(latex)
 
         print(f"LaTeX table exported to: {filename}")
+
+    def export_charts(self, output_dir: str = "charts"):
+        """
+        Generate charts for thesis Section 3.4.
+
+        Creates:
+        - prove_verify_comparison.png - Bar chart of prove/verify times
+        - proof_size_comparison.png - Bar chart of proof sizes
+        - time_distribution.png - Box plot of time distribution
+        - combined_metrics.png - Combined comparison chart
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import matplotlib
+            matplotlib.use('Agg')  # Non-interactive backend
+        except ImportError:
+            print("ERROR: matplotlib not installed. Run: pip install matplotlib")
+            return
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Filter protocols with data
+        protocols = []
+        prove_times = []
+        prove_stds = []
+        verify_times = []
+        verify_stds = []
+        proof_sizes = []
+        colors = ['#2ecc71', '#3498db', '#9b59b6']  # green, blue, purple
+
+        for name, result in self.results.items():
+            if result.iterations > 0 and result.prove_times:
+                protocols.append(result.protocol_name)
+                prove_times.append(result.prove_mean)
+                prove_stds.append(result.prove_std)
+                verify_times.append(result.verify_mean)
+                verify_stds.append(result.verify_std)
+                proof_sizes.append(result.proof_size_mean)
+
+        if not protocols:
+            print("No data to plot.")
+            return
+
+        # Set style
+        plt.style.use('seaborn-v0_8-whitegrid')
+        plt.rcParams['font.size'] = 12
+        plt.rcParams['axes.titlesize'] = 14
+        plt.rcParams['axes.labelsize'] = 12
+
+        # Chart 1: Prove vs Verify Time Comparison
+        fig, ax = plt.subplots(figsize=(10, 6))
+        x = range(len(protocols))
+        width = 0.35
+
+        bars1 = ax.bar([i - width/2 for i in x], prove_times, width,
+                       yerr=prove_stds, label='Prove Time', color='#3498db', capsize=5)
+        bars2 = ax.bar([i + width/2 for i in x], verify_times, width,
+                       yerr=verify_stds, label='Verify Time', color='#2ecc71', capsize=5)
+
+        ax.set_xlabel('Protocol')
+        ax.set_ylabel('Time (ms)')
+        ax.set_title('ZK Protocol Performance: Prove vs Verify Time')
+        ax.set_xticks(x)
+        ax.set_xticklabels(protocols)
+        ax.legend()
+        ax.grid(axis='y', alpha=0.3)
+
+        # Add value labels on bars
+        for bar in bars1:
+            height = bar.get_height()
+            ax.annotate(f'{height:.1f}',
+                       xy=(bar.get_x() + bar.get_width() / 2, height),
+                       xytext=(0, 3), textcoords="offset points",
+                       ha='center', va='bottom', fontsize=10)
+        for bar in bars2:
+            height = bar.get_height()
+            ax.annotate(f'{height:.1f}',
+                       xy=(bar.get_x() + bar.get_width() / 2, height),
+                       xytext=(0, 3), textcoords="offset points",
+                       ha='center', va='bottom', fontsize=10)
+
+        plt.tight_layout()
+        path1 = os.path.join(output_dir, 'prove_verify_comparison.png')
+        plt.savefig(path1, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"  Chart saved: {path1}")
+
+        # Chart 2: Proof Size Comparison
+        fig, ax = plt.subplots(figsize=(8, 6))
+        bars = ax.bar(protocols, proof_sizes, color=colors[:len(protocols)], edgecolor='black')
+        ax.set_xlabel('Protocol')
+        ax.set_ylabel('Proof Size (bytes)')
+        ax.set_title('ZK Protocol Comparison: Proof Size')
+        ax.grid(axis='y', alpha=0.3)
+
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate(f'{height:.0f} B',
+                       xy=(bar.get_x() + bar.get_width() / 2, height),
+                       xytext=(0, 3), textcoords="offset points",
+                       ha='center', va='bottom', fontsize=11, fontweight='bold')
+
+        plt.tight_layout()
+        path2 = os.path.join(output_dir, 'proof_size_comparison.png')
+        plt.savefig(path2, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"  Chart saved: {path2}")
+
+        # Chart 3: Time Distribution (Box Plot)
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+        # Prove time distribution
+        prove_data = []
+        labels = []
+        for name, result in self.results.items():
+            if result.iterations > 0 and result.prove_times:
+                prove_data.append(result.prove_times)
+                labels.append(result.protocol_name)
+
+        if prove_data:
+            bp1 = axes[0].boxplot(prove_data, labels=labels, patch_artist=True)
+            for patch, color in zip(bp1['boxes'], colors[:len(labels)]):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.7)
+            axes[0].set_ylabel('Time (ms)')
+            axes[0].set_title('Prove Time Distribution')
+            axes[0].grid(axis='y', alpha=0.3)
+
+        # Verify time distribution
+        verify_data = []
+        for name, result in self.results.items():
+            if result.iterations > 0 and result.verify_times:
+                verify_data.append(result.verify_times)
+
+        if verify_data:
+            bp2 = axes[1].boxplot(verify_data, labels=labels, patch_artist=True)
+            for patch, color in zip(bp2['boxes'], colors[:len(labels)]):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.7)
+            axes[1].set_ylabel('Time (ms)')
+            axes[1].set_title('Verify Time Distribution')
+            axes[1].grid(axis='y', alpha=0.3)
+
+        plt.tight_layout()
+        path3 = os.path.join(output_dir, 'time_distribution.png')
+        plt.savefig(path3, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"  Chart saved: {path3}")
+
+        # Chart 4: Combined Metrics (Radar-like comparison using grouped bars)
+        fig, axes = plt.subplots(1, 3, figsize=(14, 5))
+
+        # Subplot 1: Prove Time
+        ax1 = axes[0]
+        bars = ax1.bar(protocols, prove_times, yerr=prove_stds,
+                       color=colors[:len(protocols)], capsize=5, edgecolor='black')
+        ax1.set_title('Prove Time (ms)')
+        ax1.set_ylabel('Time (ms)')
+        ax1.grid(axis='y', alpha=0.3)
+        for bar in bars:
+            height = bar.get_height()
+            ax1.annotate(f'{height:.1f}', xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3), textcoords="offset points", ha='center', fontsize=10)
+
+        # Subplot 2: Verify Time
+        ax2 = axes[1]
+        bars = ax2.bar(protocols, verify_times, yerr=verify_stds,
+                       color=colors[:len(protocols)], capsize=5, edgecolor='black')
+        ax2.set_title('Verify Time (ms)')
+        ax2.set_ylabel('Time (ms)')
+        ax2.grid(axis='y', alpha=0.3)
+        for bar in bars:
+            height = bar.get_height()
+            ax2.annotate(f'{height:.1f}', xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3), textcoords="offset points", ha='center', fontsize=10)
+
+        # Subplot 3: Proof Size
+        ax3 = axes[2]
+        bars = ax3.bar(protocols, proof_sizes, color=colors[:len(protocols)], edgecolor='black')
+        ax3.set_title('Proof Size (bytes)')
+        ax3.set_ylabel('Size (bytes)')
+        ax3.grid(axis='y', alpha=0.3)
+        for bar in bars:
+            height = bar.get_height()
+            ax3.annotate(f'{height:.0f}', xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3), textcoords="offset points", ha='center', fontsize=10)
+
+        plt.suptitle(f'ZK Protocol Comparison (n={self.iterations})', fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        path4 = os.path.join(output_dir, 'combined_metrics.png')
+        plt.savefig(path4, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"  Chart saved: {path4}")
+
+        print(f"\nAll charts exported to: {output_dir}/")
 
     def get_summary_dict(self) -> Dict:
         """Get results as a dictionary for programmatic use."""
