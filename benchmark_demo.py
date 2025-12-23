@@ -21,6 +21,7 @@
     python benchmark_demo.py -n 50        # 50 ітерацій
     python benchmark_demo.py --csv results.csv    # Експорт у CSV
     python benchmark_demo.py --latex table.tex    # Експорт у LaTeX
+    python benchmark_demo.py --no-verbose         # Без детального виводу ітерацій
 """
 
 import sys
@@ -152,6 +153,19 @@ def main():
         help='Необхідний вік (public input, за замовчуванням: 18)'
     )
 
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        default=True,
+        help='Детальний вивід кожної ітерації (за замовчуванням: увімкнено)'
+    )
+
+    parser.add_argument(
+        '--no-verbose',
+        action='store_true',
+        help='Вимкнути детальний вивід (показувати тільки прогрес-бар)'
+    )
+
     args = parser.parse_args()
 
     # Визначення кількості ітерацій
@@ -162,6 +176,9 @@ def main():
     else:
         iterations = args.iterations
 
+    # Визначення режиму виводу
+    verbose = not args.no_verbose
+
     print_header()
     print_methodology()
 
@@ -169,7 +186,8 @@ def main():
     benchmark = ProtocolBenchmark(
         iterations=iterations,
         age=args.age,
-        required_age=args.required_age
+        required_age=args.required_age,
+        verbose=verbose
     )
 
     try:

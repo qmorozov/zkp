@@ -85,7 +85,7 @@ class ProtocolBenchmark:
         benchmark.export_to_csv('results.csv')
     """
 
-    def __init__(self, iterations: int = 100, age: int = 25, required_age: int = 18):
+    def __init__(self, iterations: int = 100, age: int = 25, required_age: int = 18, verbose: bool = True):
         """
         Initialize benchmark suite.
 
@@ -93,10 +93,12 @@ class ProtocolBenchmark:
             iterations: Number of iterations for each benchmark
             age: Test age value (private input)
             required_age: Required age threshold (public input)
+            verbose: Print details for each iteration
         """
         self.iterations = iterations
         self.age = age
         self.required_age = required_age
+        self.verbose = verbose
         self.results: Dict[str, BenchmarkResult] = {}
 
         # Paths
@@ -119,13 +121,26 @@ class ProtocolBenchmark:
             return False, "Timeout", 0
 
     def _print_progress(self, current: int, total: int, protocol: str, width: int = 30):
-        """Print a progress bar."""
+        """Print a progress bar (used when verbose=False)."""
         percent = current / total
         filled = int(width * percent)
         bar = "█" * filled + "░" * (width - filled)
         print(f"\r  {C.CYAN}{protocol:<10}{C.RESET} [{C.GREEN}{bar}{C.RESET}] {current}/{total} ({percent*100:.0f}%)", end="", flush=True)
         if current == total:
             print()  # New line when done
+
+    def _print_iteration(self, iteration: int, total: int, protocol: str,
+                         setup_time: float, prove_time: float, verify_time: float,
+                         proof_size: int, is_valid: bool):
+        """Print details for a single iteration."""
+        valid_str = f"{C.GREEN}OK{C.RESET}" if is_valid else f"{C.RED}FAIL{C.RESET}"
+        print(f"  {C.DIM}[{iteration:>3}/{total}]{C.RESET} "
+              f"{C.CYAN}{protocol:<8}{C.RESET} │ "
+              f"setup: {C.YELLOW}{setup_time:>7.2f}{C.RESET} мс │ "
+              f"prove: {C.YELLOW}{prove_time:>7.2f}{C.RESET} мс │ "
+              f"verify: {C.YELLOW}{verify_time:>7.2f}{C.RESET} мс │ "
+              f"proof: {C.MAGENTA}{proof_size:>5}{C.RESET} Б │ "
+              f"{valid_str}")
 
     def benchmark_schnorr(self) -> BenchmarkResult:
         """Бенчмарк Schnorr Sigma Protocol."""
@@ -153,7 +168,8 @@ class ProtocolBenchmark:
                 'c': proof['c'],
                 's': proof['s']
             })
-            result.proof_sizes.append(len(proof_json.encode('utf-8')))
+            proof_size = len(proof_json.encode('utf-8'))
+            result.proof_sizes.append(proof_size)
 
             # Verify
             verify_start = time.perf_counter()
@@ -164,7 +180,11 @@ class ProtocolBenchmark:
             if not is_valid:
                 result.all_valid = False
 
-            self._print_progress(i + 1, self.iterations, "Schnorr")
+            if self.verbose:
+                self._print_iteration(i + 1, self.iterations, "Schnorr",
+                                      setup_time, prove_time, verify_time, proof_size, is_valid)
+            else:
+                self._print_progress(i + 1, self.iterations, "Schnorr")
 
         result.iterations = self.iterations
         print(f"  {C.GREEN}✓{C.RESET} Завершено: {C.BOLD_YELLOW}{result.prove_mean:.2f} мс{C.RESET} prove, {C.BOLD_YELLOW}{result.verify_mean:.2f} мс{C.RESET} verify")
@@ -187,7 +207,8 @@ class ProtocolBenchmark:
             return result
 
         for i in range(self.iterations):
-            result.setup_times.append(0)  # Setup already done
+            setup_time = 0  # Setup already done
+            result.setup_times.append(setup_time)
 
             # Create input file
             input_data = {"age": str(self.age), "requiredAge": str(self.required_age)}
@@ -198,6 +219,9 @@ class ProtocolBenchmark:
             witness_path = tempfile.mktemp(suffix='.wtns')
             proof_path = tempfile.mktemp(suffix='.json')
             public_path = tempfile.mktemp(suffix='.json')
+
+            is_valid = True
+            proof_size = 0
 
             try:
                 # Generate witness + prove (combined as "prove" time)
@@ -220,7 +244,8 @@ class ProtocolBenchmark:
 
                 # Get proof size
                 if os.path.exists(proof_path):
-                    result.proof_sizes.append(os.path.getsize(proof_path))
+                    proof_size = os.path.getsize(proof_path)
+                    result.proof_sizes.append(proof_size)
                 else:
                     result.proof_sizes.append(0)
 
@@ -234,6 +259,7 @@ class ProtocolBenchmark:
                 result.verify_times.append(verify_time)
 
                 if not success or "OK" not in output:
+                    is_valid = False
                     result.all_valid = False
 
             finally:
@@ -242,7 +268,11 @@ class ProtocolBenchmark:
                     if os.path.exists(p):
                         os.unlink(p)
 
-            self._print_progress(i + 1, self.iterations, "Groth16")
+            if self.verbose:
+                self._print_iteration(i + 1, self.iterations, "Groth16",
+                                      setup_time, prove_time, verify_time, proof_size, is_valid)
+            else:
+                self._print_progress(i + 1, self.iterations, "Groth16")
 
         result.iterations = self.iterations
         if result.prove_times:
@@ -266,7 +296,8 @@ class ProtocolBenchmark:
             return result
 
         for i in range(self.iterations):
-            result.setup_times.append(0)  # Setup already done
+            setup_time = 0  # Setup already done
+            result.setup_times.append(setup_time)
 
             # Create input file
             input_data = {"age": str(self.age), "requiredAge": str(self.required_age)}
@@ -277,6 +308,9 @@ class ProtocolBenchmark:
             witness_path = tempfile.mktemp(suffix='.wtns')
             proof_path = tempfile.mktemp(suffix='.json')
             public_path = tempfile.mktemp(suffix='.json')
+
+            is_valid = True
+            proof_size = 0
 
             try:
                 # Generate witness + prove
@@ -297,7 +331,8 @@ class ProtocolBenchmark:
 
                 # Get proof size
                 if os.path.exists(proof_path):
-                    result.proof_sizes.append(os.path.getsize(proof_path))
+                    proof_size = os.path.getsize(proof_path)
+                    result.proof_sizes.append(proof_size)
                 else:
                     result.proof_sizes.append(0)
 
@@ -311,6 +346,7 @@ class ProtocolBenchmark:
                 result.verify_times.append(verify_time)
 
                 if not success or "OK" not in output:
+                    is_valid = False
                     result.all_valid = False
 
             finally:
@@ -318,7 +354,11 @@ class ProtocolBenchmark:
                     if os.path.exists(p):
                         os.unlink(p)
 
-            self._print_progress(i + 1, self.iterations, "PLONK")
+            if self.verbose:
+                self._print_iteration(i + 1, self.iterations, "PLONK",
+                                      setup_time, prove_time, verify_time, proof_size, is_valid)
+            else:
+                self._print_progress(i + 1, self.iterations, "PLONK")
 
         result.iterations = self.iterations
         if result.prove_times:
